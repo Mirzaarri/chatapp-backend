@@ -6,67 +6,59 @@ import { Server } from 'socket.io';
 import http from 'http';
 import connectDB from './src/connection/connection';
 import userRoutes from './src/routes/user.route';
+import chatRoutes from './src/routes/chat.route';
+import { saveChatMessage } from './src/services';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
 connectDB();
 
-// Routes
 app.get('/', (req: Request, res: Response) => {
   res.send('Hello, world! Your Express server is running.');
 });
 
 app.use('/api/user', userRoutes);
+app.use('/api/chat', chatRoutes);  // Use chat routes
 
-// Create HTTP server
 const server = http.createServer(app);
 
-// Socket.io setup
 const io = new Server(server, {
   cors: {
-    origin: 'http://localhost:5173', // Allow your frontend origin
+    origin: 'http://localhost:5173',
     methods: ['GET', 'POST'],
   },
 });
 
-let onlineUsers: { socketId: string; userName: string }[] = [];
+let onlineUsers: { socketId: string; userId: string, userName: string }[] = [];
 
-// Listen for socket connections
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
-  // Handle user joining
-  socket.on('join', (userName: string) => {
-    onlineUsers.push({ socketId: socket.id, userName });
-    console.log('Online Users:', onlineUsers);
-    io.emit('onlineUsers', onlineUsers); // Broadcast online users
+  socket.on('join', (data) => {
+    onlineUsers.push({ socketId: socket.id, userId: data.userId, userName: data.userName });
+    io.emit('onlineUsers', onlineUsers);
   });
 
-  // Handle private messages
-  socket.on('privateMessage', ({ message, to }) => {
-    const sender = onlineUsers.find((user) => user.socketId === socket.id); // Get sender's username
-    const recipient = onlineUsers.find((user) => user.socketId === to); // Get recipient's username
-    if (sender && recipient) {
-      // Send message with sender's username and recipient's username
-      io.to(to).emit('message', { message, userName: sender.userName });
-      
-      // Emit recipient's name back to the sender so you can display it
-      socket.emit('recipientName', recipient.userName);
-    }
-  });
+  socket.on('privateMessage', async ({ message, to }) => { 
+  const sender = onlineUsers.find((user) => user.socketId === socket.id);
+  const recipient = onlineUsers.find((user) => user.socketId === to);
 
-  // Handle disconnection
+  if (sender && recipient) {
+    const response = await saveChatMessage(sender.userId, recipient.userId, message);
+    io.to(to).emit('message', response);
+  }
+});
+
   socket.on('disconnect', () => {
     onlineUsers = onlineUsers.filter((user) => user.socketId !== socket.id);
-    io.emit('onlineUsers', onlineUsers); // Broadcast updated users
+    io.emit('onlineUsers', onlineUsers);
     console.log('A user disconnected:', socket.id);
   });
 });
